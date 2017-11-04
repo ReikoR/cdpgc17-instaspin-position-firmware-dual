@@ -213,6 +213,7 @@ extern "C" {
 #define Estun_EMJ_04APB22_2           101
 #define Anaheim_BLY172S_2             102
 #define Teknic_M2310PLN04K_2          104
+#define aerodrive_4250_350kv        123
 
 // IPM motors
 // If user provides separate Ls-d, Ls-q
@@ -227,9 +228,10 @@ extern "C" {
 //! \brief Once your ideal settings and parameters are identified update the motor section here so it is available in the binary code
 //#define USER_MOTOR_2 Estun_EMJ_04APB22_2
 //#define USER_MOTOR_2 Anaheim_BLY172S_2
-#define USER_MOTOR_2 Teknic_M2310PLN04K_2
+//#define USER_MOTOR_2 Teknic_M2310PLN04K_2
 //#define USER_MOTOR_2 Belt_Drive_Washer_IPM_2
 //#define USER_MOTOR_2 Marathon_5K33GN2A_2
+#define USER_MOTOR_2 aerodrive_4250_350kv
 
 
 #if (USER_MOTOR == Estun_EMJ_04APB22_2)                  // Name must match the motor #define
@@ -317,6 +319,24 @@ extern "C" {
 #define USER_MOTOR_MAX_SPEED_KRPM       (1.725)              // Maximum speed that the motor
 #define USER_SYSTEM_INERTIA             (0.02)               // Inertia of the motor & system, should be estimated by SpinTAC Velocity Identify
 #define USER_SYSTEM_FRICTION            (0.01)               // Friction of the motor & system, should be estimated by SpinTAC Velocity Identify
+
+#elif (USER_MOTOR_2 == aerodrive_4250_350kv)
+#define USER_MOTOR_TYPE_2                 MOTOR_Type_Pm
+#define USER_MOTOR_NUM_POLE_PAIRS_2       (7)
+#define USER_MOTOR_Rr_2                   (NULL)
+#define USER_MOTOR_Rs_2                   (0.0249244906)
+#define USER_MOTOR_Ls_d_2                 (1.95586745e-05)
+#define USER_MOTOR_Ls_q_2                 (1.95586745e-05)
+#define USER_MOTOR_RATED_FLUX_2           (0.0143373376)
+#define USER_MOTOR_MAGNETIZING_CURRENT_2  (NULL)
+#define USER_MOTOR_RES_EST_CURRENT_2      (2.0)
+#define USER_MOTOR_IND_EST_CURRENT_2      (-2.0)
+#define USER_MOTOR_MAX_CURRENT_2          (20.0)
+#define USER_MOTOR_FLUX_EST_FREQ_Hz_2     (100.0)
+#define USER_MOTOR_ENCODER_LINES_2        (2048.0)
+#define USER_MOTOR_MAX_SPEED_KRPM_2       (4.0)
+#define USER_SYSTEM_INERTIA_2             (0.16)
+#define USER_SYSTEM_FRICTION_2            (0.15)
 
 #else
 #error No motor type specified
