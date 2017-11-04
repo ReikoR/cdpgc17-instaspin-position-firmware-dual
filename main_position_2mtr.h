@@ -283,6 +283,10 @@ typedef struct _MOTOR_Vars_t_
 interrupt void motor1_ISR(void);
 interrupt void motor2_ISR(void);
 
+//! \brief The SCI-B receive interrupt service (ISR) routine
+//!
+interrupt void sciBRxISR(void);
+
 void pidSetup(HAL_MtrSelect_e mtrNum);
 
 

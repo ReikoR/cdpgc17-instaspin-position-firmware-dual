@@ -685,6 +685,9 @@ HAL_Handle HAL_init(void *pMemory,const size_t numBytes)
   obj->timerHandle[1] = TIMER_init((void *)TIMER1_BASE_ADDR,sizeof(TIMER_Obj));
   obj->timerHandle[2] = TIMER_init((void *)TIMER2_BASE_ADDR,sizeof(TIMER_Obj));
 
+  // initialize the SCI handles
+  obj->sciAHandle = SCI_init((void *)SCIA_BASE_ADDR,sizeof(SCI_Obj));
+  obj->sciBHandle = SCI_init((void *)SCIB_BASE_ADDR,sizeof(SCI_Obj));
 
   return(handle);
 } // end of HAL_init() function
@@ -803,6 +806,14 @@ void HAL_setParams(HAL_Handle handle,const USER_Params *pUserParams)
 
   // setup the spiB
   HAL_setupSpiB(handle);
+
+
+  // setup the sciA
+  HAL_setupSciA(handle);
+
+
+  // setup the sciB
+  HAL_setupSciB(handle);
 
 
   // setup the PWM DACs
@@ -1742,5 +1753,41 @@ void HAL_setupDrvSpi(HAL_Handle_mtr handle, DRV_SPI_8305_Vars_t *Spi_8305_Vars)
   return;
 }  // end of HAL_setupDrvSpi() function
 
+void HAL_setupSciA(HAL_Handle handle) {
+    return;
+}
+
+void HAL_setupSciB(HAL_Handle handle)
+{
+    HAL_Obj *obj = (HAL_Obj *)handle;
+    SCI_reset(obj->sciBHandle);
+    SCI_enableTx(obj->sciBHandle);
+    SCI_enableRx(obj->sciBHandle);
+    SCI_disableParity(obj->sciBHandle);
+    SCI_setNumStopBits(obj->sciBHandle,SCI_NumStopBits_One);
+    SCI_setCharLength(obj->sciBHandle,SCI_CharLength_8_Bits);
+    // set baud rate to 150000
+    SCI_setBaudRate(obj->sciBHandle,(SCI_BaudRate_e)(74));
+    SCI_setPriority(obj->sciBHandle,SCI_Priority_FreeRun);
+    SCI_enable(obj->sciBHandle);
+    return;
+    // end of HAL_setupSciB() function
+}
+
+void HAL_enableSciInts(HAL_Handle handle)
+{
+    HAL_Obj *obj = (HAL_Obj *) handle;
+
+    // enable the PIE interrupts associated with the SCI interrupts
+    // enable SCIB RX interrupt in PIE
+    PIE_enableInt(obj->pieHandle, PIE_GroupNumber_9, PIE_InterruptSource_SCIBRX);
+
+    // enable SCI RX interrupts
+    // enable SCIB RX interrupt
+    SCI_enableRxInt(obj->sciBHandle);
+
+    // enable the cpu interrupt for SCI interrupts
+    CPU_enableInt(obj->cpuHandle, CPU_IntNumber_9);
+} // end of HAL_enableSciInts() function
 
 // end of file

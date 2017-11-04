@@ -385,6 +385,9 @@ void main(void)
     // enable the ADC interrupts
     HAL_enableAdcInts(halHandle);
 
+    // enable the SCI interrupts
+    HAL_enableSciInts(halHandle);
+
     // enable global interrupts
     HAL_enableGlobalInts(halHandle);
 
@@ -1013,6 +1016,12 @@ interrupt void motor2_ISR(void)
 
   return;
 } // end of motor2_ISR() function
+
+
+//! \brief the ISR for SCI-B receive interrupt
+interrupt void sciBRxISR(void) {
+
+} // end of sciBRxISR() function
 
 
 void pidSetup(HAL_MtrSelect_e mtrNum)
