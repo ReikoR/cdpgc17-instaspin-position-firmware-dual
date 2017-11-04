@@ -178,6 +178,11 @@ _iq gSpeed_hz_to_krpm_sf[2];
 
 _iq gCurrent_A_to_pu_sf[2];
 
+
+volatile bool voltageTooLowList[2] = { true, true };
+_iq lowVoltageThreshold = _IQ(0.01);
+
+
 // **************************************************************************
 // the functions
 void main(void) {
@@ -429,8 +434,7 @@ void main(void) {
 	for (;;) {
 		// Waiting for enable system flag to be set
 		// Motor 1 Flag_enableSys is the master control.
-		while (!(gMotorVars[HAL_MTR1].Flag_enableSys))
-			;
+		while (!(gMotorVars[HAL_MTR1].Flag_enableSys));
 
 		// loop while the enable system flag is true
 		// Motor 1 Flag_enableSys is the master control.
@@ -439,9 +443,19 @@ void main(void) {
 
 			for (mtrNum = HAL_MTR1; mtrNum <= HAL_MTR2; mtrNum++) {
 
-				// If Flag_enableSys is set AND Flag_Run_Identify is set THEN
-				// enable PWMs and set the speed reference
+				if (voltageTooLowList[mtrNum] && gMotorVars[mtrNum].VdcBus_kV > lowVoltageThreshold) {
+					voltageTooLowList[mtrNum] = false;
+
+				} else if (!voltageTooLowList[mtrNum] && gMotorVars[mtrNum].VdcBus_kV < lowVoltageThreshold) {
+					voltageTooLowList[mtrNum] = true;
+
+					gMotorVars[mtrNum].Flag_Run_Identify = false;
+				}
+
 				if (gMotorVars[mtrNum].Flag_Run_Identify) {
+					// If Flag_enableSys is set AND Flag_Run_Identify is set THEN
+					// enable PWMs and set the speed reference
+
 					// update estimator state
 					EST_updateState(estHandle[mtrNum], 0);
 
@@ -464,8 +478,9 @@ void main(void) {
 					STPOSCTL_setOutputMaximums(st_obj[mtrNum].posCtlHandle,
 							_IQmpy(gMotorVars[mtrNum].SpinTAC.PosCtlOutputMax_A, gCurrent_A_to_pu_sf[mtrNum]),
 							_IQmpy(gMotorVars[mtrNum].SpinTAC.PosCtlOutputMin_A, gCurrent_A_to_pu_sf[mtrNum]));
-				} else  // Flag_enableSys is set AND Flag_Run_Identify is not set
-				{
+				} else {
+			    	//Flag_enableSys is set AND Flag_Run_Identify is not set
+
 					// set estimator to Idle
 					EST_setIdle(estHandle[mtrNum]);
 
