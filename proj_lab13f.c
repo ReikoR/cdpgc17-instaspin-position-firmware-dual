@@ -179,8 +179,78 @@ _iq gSpeed_hz_to_krpm_sf[2];
 _iq gCurrent_A_to_pu_sf[2];
 
 
+#define ST_SPEED_PU_PER_Hz (USER_MOTOR_NUM_POLE_PAIRS / USER_IQ_FULL_SCALE_FREQ_Hz)
+
+#define ST_SPEED_Hz_PER_PU (USER_IQ_FULL_SCALE_FREQ_Hz / USER_MOTOR_NUM_POLE_PAIRS)
+
 volatile bool voltageTooLowList[2] = { true, true };
 _iq lowVoltageThreshold = _IQ(0.01);
+
+uint16_t dataRx;
+uint16_t success;
+
+char buf[32];
+char returnBuf[32];
+int counter = 0;
+int rxIntCounter = 0;
+int commandReceived = 0;
+int commandStart = 0;
+int sendFeedback = 0;
+
+typedef struct PositionParams {
+	_iq20 posRef;
+	_iq20 transitionPosRef;
+	_iq20 speedRef_rps;
+	_iq20 maxSpeed_rps;
+	_iq20 minSpeed_rps;
+	_iq20 acc_rpsps;
+	_iq20 dec_rpsps;
+	_iq20 posDiff;
+	_iq20 requiredDeceleration_rpsps;
+	_iq20 prevSpeed_rps;
+	_iq20 currentAcc_rpsps;
+	_iq20 posSampleTime_sec;
+	long counter;
+} PositionParams;
+
+PositionParams positionParamsList[2] = {
+	{
+		.posRef = _IQ20(0.0),
+		.transitionPosRef = _IQ20(0.0),
+		.speedRef_rps = _IQ20(0.0),
+		.maxSpeed_rps = _IQ20(1.0),
+		.minSpeed_rps = _IQ20(0.001),
+		.acc_rpsps = _IQ20(500.0),
+		.dec_rpsps = _IQ20(500.0),
+		.posDiff = _IQ20(0.0),
+		.requiredDeceleration_rpsps = _IQ20(0.0),
+		.prevSpeed_rps = _IQ20(0.0),
+		.currentAcc_rpsps = _IQ20(0.0),
+		.posSampleTime_sec = _IQ20(ST_SAMPLE_TIME),
+		.counter = 0
+	},
+	{
+		.posRef = _IQ20(0.0),
+		.transitionPosRef = _IQ20(0.0),
+		.speedRef_rps = _IQ20(0.0),
+		.maxSpeed_rps = _IQ20(1.0),
+		.minSpeed_rps = _IQ20(0.001),
+		.acc_rpsps = _IQ20(500.0),
+		.dec_rpsps = _IQ20(500.0),
+		.posDiff = _IQ20(0.0),
+		.requiredDeceleration_rpsps = _IQ20(0.0),
+		.prevSpeed_rps = _IQ20(0.0),
+		.currentAcc_rpsps = _IQ20(0.0),
+		.posSampleTime_sec = _IQ20(ST_SAMPLE_TIME_2),
+		.counter = 0
+	}
+};
+
+_iq runPosCtl(HAL_MtrSelect_e mtrNum);
+
+void calcTransitionPosRef(HAL_MtrSelect_e mtrNum);
+
+void serialWrite(char *sendData, int length);
 
 
 // **************************************************************************
@@ -358,9 +428,9 @@ void main(void) {
 	ST_setupPosConv_mtr1(stHandle[HAL_MTR1]);
 	ST_setupPosConv_mtr2(stHandle[HAL_MTR2]);
 	ST_setupPosCtl_mtr1(stHandle[HAL_MTR1]);
-	ST_setupPosMove_mtr1(stHandle[HAL_MTR1]);
+	//ST_setupPosMove_mtr1(stHandle[HAL_MTR1]);
 	ST_setupPosCtl_mtr2(stHandle[HAL_MTR2]);
-	ST_setupPosMove_mtr2(stHandle[HAL_MTR2]);
+	//ST_setupPosMove_mtr2(stHandle[HAL_MTR2]);
 
 	// set the pre-determined current and voltage feeback offset values
 	gOffsets_I_pu[HAL_MTR1].value[0] = _IQ(I_A_offset);
@@ -499,8 +569,7 @@ void main(void) {
 					// place SpinTAC Velocity Control into reset
 					STPOSCTL_setEnable(st_obj[mtrNum].posCtlHandle, false);
 					// If motor is not running, feed the position feedback into SpinTAC Position Move
-					STPOSMOVE_setPositionStart_mrev(st_obj[mtrNum].posMoveHandle,
-							STPOSCONV_getPosition_mrev(st_obj[mtrNum].posConvHandle));
+					//STPOSMOVE_setPositionStart_mrev(st_obj[mtrNum].posMoveHandle, STPOSCONV_getPosition_mrev(st_obj[mtrNum].posConvHandle));
 				}
 
 				// update the global variables
@@ -521,6 +590,46 @@ void main(void) {
 #endif
 
 			} // end of for loop
+
+			if (sendFeedback) {
+				sendFeedback = 0;
+
+				gMotorVars[HAL_MTR1].Flag_Run_Identify = true;
+				gMotorVars[HAL_MTR2].Flag_Run_Identify = true;
+
+				returnBuf[0] = '<';
+
+				long motor1Position = _IQ20mpyI32(_IQ20(20.0), st_obj[HAL_MTR1].pos.conv.PosROCounts) + _IQtoIQ20(st_obj[HAL_MTR1].pos.conv.Pos_mrev);
+				long motor1Speed = _IQ20mpy(_IQtoIQ20(STPOSCONV_getVelocityFiltered(st_obj[HAL_MTR1].posConvHandle)), _IQ20(ST_SPEED_Hz_PER_PU));
+
+				long motor2Position = _IQ20mpyI32(_IQ20(20.0), st_obj[HAL_MTR2].pos.conv.PosROCounts) + _IQtoIQ20(st_obj[HAL_MTR2].pos.conv.Pos_mrev);
+				long motor2Speed = _IQ20mpy(_IQtoIQ20(STPOSCONV_getVelocityFiltered(st_obj[HAL_MTR2].posConvHandle)), _IQ20(ST_SPEED_Hz_PER_PU));
+
+				returnBuf[1] = motor1Position;
+				returnBuf[2] = motor1Position >> 8;
+				returnBuf[3] = motor1Position >> 16;
+				returnBuf[4] = motor1Position >> 24;
+
+				returnBuf[5] = motor1Speed;
+				returnBuf[6] = motor1Speed >> 8;
+				returnBuf[7] = motor1Speed >> 16;
+				returnBuf[8] = motor1Speed >> 24;
+
+				returnBuf[9] = motor2Position;
+				returnBuf[10] = motor2Position >> 8;
+				returnBuf[11] = motor2Position >> 16;
+				returnBuf[12] = motor2Position >> 24;
+
+				returnBuf[13] = motor2Speed;
+				returnBuf[14] = motor2Speed >> 8;
+				returnBuf[15] = motor2Speed >> 16;
+				returnBuf[16] = motor2Speed >> 24;
+
+				returnBuf[17] = '>';
+
+				serialWrite(returnBuf, 18);
+			}
+
 		} // end of while(gFlag_enableSys) loop
 
 		// disable the PWM
@@ -580,10 +689,22 @@ interrupt void motor1_ISR(void) {
 	// compute the electrical angle
 	ENC_calcElecAngle(encHandle[HAL_MTR1], HAL_getQepPosnCounts(halHandleMtr[HAL_MTR1]));
 
+	//bool shouldRunPosCtl = false;
+
 	if (stCntPosition[HAL_MTR1] >= gUserParams[HAL_MTR1].numCtrlTicksPerSpeedTick) {
+		stCntPosition[HAL_MTR1] = 0;
+		//shouldRunPosCtl = true;
+
 		// Calculate the feedback position, this must always be ran in order to ensure there are no jumps
 		ST_runPosConv(stHandle[HAL_MTR1], encHandle[HAL_MTR1], slipHandle[HAL_MTR1], &gIdq_pu[HAL_MTR1],
 				gUserParams[HAL_MTR1].motor_type);
+
+		calcTransitionPosRef(HAL_MTR1);
+
+		gIdq_ref_pu[HAL_MTR1].value[1] = runPosCtl(HAL_MTR1);
+	} else {
+		// increment counter
+		stCntPosition[HAL_MTR1]++;
 	}
 
 	// run the appropriate controller
@@ -597,7 +718,7 @@ interrupt void motor1_ISR(void) {
 		if (gMotorVars[HAL_MTR1].Flag_enableAlignment == false) {
 			// when appropriate, run SpinTAC Position Control
 			// This mechanism provides the decimation for the speed loop.
-			if (stCntPosition[HAL_MTR1] >= gUserParams[HAL_MTR1].numCtrlTicksPerSpeedTick) {
+			/*if (stCntPosition[HAL_MTR1] >= gUserParams[HAL_MTR1].numCtrlTicksPerSpeedTick) {
 				// Reset the Position execution counter.
 				stCntPosition[HAL_MTR1] = 0;
 
@@ -626,16 +747,21 @@ interrupt void motor1_ISR(void) {
 
 				// The next instruction executes SpinTAC Velocity Move
 				// This is the speed profile generation
-				STPOSMOVE_run(st_obj[HAL_MTR1].posMoveHandle);
+				//STPOSMOVE_run(st_obj[HAL_MTR1].posMoveHandle);
 
 				// The next instruction executes SpinTAC Position Control and places
 				// its output in Idq_ref_pu.value[1], which is the input reference
 				// value for the q-axis current controller.
-				gIdq_ref_pu[HAL_MTR1].value[1] = ST_runPosCtl(stHandle[HAL_MTR1]);
+				gIdq_ref_pu[HAL_MTR1].value[1] = runPosCtl(HAL_MTR1);
 			} else {
 				// increment counter
 				stCntPosition[HAL_MTR1]++;
-			}
+			}*/
+
+			/*if (shouldRunPosCtl) {
+				shouldRunPosCtl = false;
+				gIdq_ref_pu[HAL_MTR1].value[1] = runPosCtl(HAL_MTR1);
+			}*/
 
 			// generate the motor electrical angle
 			if (gUserParams[HAL_MTR1].motor_type == MOTOR_Type_Induction) {
@@ -817,10 +943,22 @@ interrupt void motor2_ISR(void) {
 	// compute the electrical angle
 	ENC_calcElecAngle(encHandle[HAL_MTR2], HAL_getQepPosnCounts(halHandleMtr[HAL_MTR2]));
 
+	//bool shouldRunPosCtl = false;
+
 	if (stCntPosition[HAL_MTR2] >= gUserParams[HAL_MTR2].numCtrlTicksPerSpeedTick) {
+		stCntPosition[HAL_MTR2] = 0;
+		//shouldRunPosCtl = true;
+
 		// Calculate the feedback position, this must always be ran in order to ensure there are no jumps
 		ST_runPosConv(stHandle[HAL_MTR2], encHandle[HAL_MTR2], slipHandle[HAL_MTR2], &gIdq_pu[HAL_MTR2],
 				gUserParams[HAL_MTR2].motor_type);
+
+		calcTransitionPosRef(HAL_MTR2);
+
+		gIdq_ref_pu[HAL_MTR2].value[1] = runPosCtl(HAL_MTR2);
+	} else {
+		// increment counter
+		stCntPosition[HAL_MTR2]++;
 	}
 
 	// run the appropriate controller
@@ -834,7 +972,7 @@ interrupt void motor2_ISR(void) {
 		if (gMotorVars[HAL_MTR2].Flag_enableAlignment == false) {
 			// when appropriate, run SpinTAC Position Control
 			// This mechanism provides the decimation for the speed loop.
-			if (stCntPosition[HAL_MTR2] >= gUserParams[HAL_MTR2].numCtrlTicksPerSpeedTick) {
+			/*if (stCntPosition[HAL_MTR2] >= gUserParams[HAL_MTR2].numCtrlTicksPerSpeedTick) {
 				// Reset the Position execution counter.
 				stCntPosition[HAL_MTR2] = 0;
 
@@ -863,16 +1001,21 @@ interrupt void motor2_ISR(void) {
 
 				// The next instruction executes SpinTAC Velocity Move
 				// This is the speed profile generation
-				STPOSMOVE_run(st_obj[HAL_MTR2].posMoveHandle);
+				//STPOSMOVE_run(st_obj[HAL_MTR2].posMoveHandle);
 
 				// The next instruction executes SpinTAC Position Control and places
 				// its output in Idq_ref_pu.value[1], which is the input reference
 				// value for the q-axis current controller.
-				gIdq_ref_pu[HAL_MTR2].value[1] = ST_runPosCtl(stHandle[HAL_MTR2]);
+				gIdq_ref_pu[HAL_MTR2].value[1] = runPosCtl(HAL_MTR2);
 			} else {
 				// increment counter
 				stCntPosition[HAL_MTR2]++;
-			}
+			}*/
+
+			/*if (shouldRunPosCtl) {
+				shouldRunPosCtl = false;
+				gIdq_ref_pu[HAL_MTR2].value[1] = runPosCtl(HAL_MTR2);
+			}*/
 
 			// generate the motor electrical angle
 			if (gUserParams[HAL_MTR2].motor_type == MOTOR_Type_Induction) {
@@ -1010,6 +1153,54 @@ interrupt void motor2_ISR(void) {
 
 //! \brief the ISR for SCI-B receive interrupt
 interrupt void sciBRxISR(void) {
+	HAL_Obj *obj = (HAL_Obj *) halHandle;
+	//CTRL_Obj *ctrlObj = (CTRL_Obj *) ctrlHandle;
+	ST_Obj *stObj = (ST_Obj *)stHandle;
+
+	dataRx = SCI_getDataNonBlocking(halHandle->sciBHandle, &success);
+	//success = SCI_putDataNonBlocking(halHandle->sciBHandle, dataRx);
+
+	// acknowledge interrupt from SCI group so that SCI interrupt
+	// is not received twice
+	PIE_clearInt(obj->pieHandle, PIE_GroupNumber_9);
+
+	if (counter < 18) {
+		if (counter == 0) {
+			if (dataRx == '<') {
+				buf[counter] = dataRx;
+				counter++;
+			} else {
+				counter = 0;
+			}
+		} else if (counter >= 1 && counter <= 16) {
+			buf[counter] = dataRx;
+			counter++;
+		} else if (counter == 17) {
+			if (dataRx == '>') {
+				buf[counter] = dataRx;
+				counter++;
+
+				if (gMotorVars[HAL_MTR1].Flag_Run_Identify && EST_getState(estHandle[HAL_MTR1]) == EST_State_OnLine && STPOSCTL_getStatus(st_obj[HAL_MTR1].posCtlHandle) == ST_CTL_BUSY) {
+					positionParamsList[HAL_MTR1].posRef = ((long) buf[1]) | ((long) buf[2] << 8) | ((long) buf[3] << 16) | ((long) buf[4] << 24);
+					positionParamsList[HAL_MTR1].maxSpeed_rps = ((long) buf[5]) | ((long) buf[6] << 8) | ((long) buf[7] << 16) | ((long) buf[8] << 24);
+				}
+
+				if (gMotorVars[HAL_MTR2].Flag_Run_Identify && EST_getState(estHandle[HAL_MTR2]) == EST_State_OnLine && STPOSCTL_getStatus(st_obj[HAL_MTR2].posCtlHandle) == ST_CTL_BUSY) {
+					positionParamsList[HAL_MTR2].posRef = ((long) buf[9]) | ((long) buf[10] << 8) | ((long) buf[11] << 16) | ((long) buf[12] << 24);
+					positionParamsList[HAL_MTR2].maxSpeed_rps = ((long) buf[13]) | ((long) buf[14] << 8) | ((long) buf[15] << 16) | ((long) buf[16] << 24);
+				}
+
+				counter = 0;
+
+				sendFeedback = 1;
+
+			} else {
+				counter = 0;
+			}
+		} else {
+			counter = 0;
+		}
+	}
 
 } // end of sciBRxISR() function
 
@@ -1215,7 +1406,7 @@ void setupClarke_V(CLARKE_Handle handle, const uint_least8_t numVoltageSensors) 
 //! \brief     Update the global variables (gMotorVars).
 //! \param[in] handle  The estimator (EST) handle
 void updateGlobalVariables(EST_Handle handle, const uint_least8_t mtrNum) {
-	uint32_t profile_mticks, profile_ticks;
+	//uint32_t profile_mticks, profile_ticks;
 
 	// get the speed estimate
 	gMotorVars[mtrNum].Speed_krpm = _IQmpy(STPOSCONV_getVelocityFiltered(st_obj[mtrNum].posConvHandle),
@@ -1259,18 +1450,21 @@ void updateGlobalVariables(EST_Handle handle, const uint_least8_t mtrNum) {
 	gMotorVars[mtrNum].SpinTAC.PosCtlErrorID = STPOSCTL_getErrorID(st_obj[mtrNum].posCtlHandle);
 
 	// get the Position Move status
-	gMotorVars[mtrNum].SpinTAC.PosMoveStatus = STPOSMOVE_getStatus(st_obj[mtrNum].posMoveHandle);
+	//gMotorVars[mtrNum].SpinTAC.PosMoveStatus = STPOSMOVE_getStatus(st_obj[mtrNum].posMoveHandle);
 
 	// get the Position Move profile time
-	STPOSMOVE_getProfileTime_tick(st_obj[mtrNum].posMoveHandle, &profile_mticks, &profile_ticks);
-	gMotorVars[mtrNum].SpinTAC.PosMoveTime_mticks = profile_mticks;
-	gMotorVars[mtrNum].SpinTAC.PosMoveTime_ticks = profile_ticks;
+	//STPOSMOVE_getProfileTime_tick(st_obj[mtrNum].posMoveHandle, &profile_mticks, &profile_ticks);
+	//gMotorVars[mtrNum].SpinTAC.PosMoveTime_mticks = profile_mticks;
+	//gMotorVars[mtrNum].SpinTAC.PosMoveTime_ticks = profile_ticks;
 
 	// get the Position Move error
-	gMotorVars[mtrNum].SpinTAC.PosMoveErrorID = STPOSMOVE_getErrorID(st_obj[mtrNum].posMoveHandle);
+	//gMotorVars[mtrNum].SpinTAC.PosMoveErrorID = STPOSMOVE_getErrorID(st_obj[mtrNum].posMoveHandle);
 
 	// get the Position Converter error
 	gMotorVars[mtrNum].SpinTAC.PosConvErrorID = STPOSCONV_getErrorID(st_obj[mtrNum].posConvHandle);
+
+	// get the estimator state
+	gMotorVars[mtrNum].EstState = EST_getState(estHandle[mtrNum]);
 
 	return;
 } // end of updateGlobalVariables() function
@@ -1298,7 +1492,7 @@ void ST_runPosConv(ST_Handle handle, ENC_Handle encHandle, SLIP_Handle slipHandl
 	}
 }
 
-_iq ST_runPosCtl(ST_Handle handle) {
+/*_iq ST_runPosCtl(ST_Handle handle) {
 	_iq iqReference;
 	ST_Obj *stObj = (ST_Obj *) handle;
 
@@ -1316,6 +1510,135 @@ _iq ST_runPosCtl(ST_Handle handle) {
 	iqReference = STPOSCTL_getTorqueReference(stObj->posCtlHandle);
 
 	return iqReference;
+}*/
+
+_iq runPosCtl(HAL_MtrSelect_e mtrNum) {
+	_iq iqReference;
+	ST_Obj *stObj = (ST_Obj *) stHandle[mtrNum];
+	PositionParams *positionParams = &positionParamsList[mtrNum];
+
+	_iq20 normalizedTransitionPosRef = positionParams->transitionPosRef;
+
+	while (normalizedTransitionPosRef > _IQ20(10.0)) {
+		normalizedTransitionPosRef -= _IQ20(20.0);
+	}
+
+	while (normalizedTransitionPosRef < _IQ20(-10.0)) {
+		normalizedTransitionPosRef += _IQ20(20.0);
+	}
+
+	// provide the updated references to the SpinTAC Position Control
+	STPOSCTL_setPositionReference_mrev(stObj->posCtlHandle, _IQ20toIQ(normalizedTransitionPosRef));
+	STPOSCTL_setVelocityReference(stObj->posCtlHandle, _IQ20mpy(positionParams->speedRef_rps, _IQ20(ST_SPEED_PU_PER_Hz)));
+	STPOSCTL_setAccelerationReference(stObj->posCtlHandle, _IQ20mpy(positionParams->currentAcc_rpsps, _IQ20(ST_SPEED_PU_PER_Hz)));
+	// provide the feedback to the SpinTAC Position Control
+	STPOSCTL_setPositionFeedback_mrev(stObj->posCtlHandle, STPOSCONV_getPosition_mrev(stObj->posConvHandle));
+
+	// Run SpinTAC Position Control
+	STPOSCTL_run(stObj->posCtlHandle);
+
+	// Provide SpinTAC Position Control Torque Output to the FOC
+	iqReference = STPOSCTL_getTorqueReference(stObj->posCtlHandle);
+
+	return iqReference;
+}
+
+void calcTransitionPosRef(HAL_MtrSelect_e mtrNum) {
+	ST_Obj *stObj = (ST_Obj *) stHandle[mtrNum];
+	PositionParams *params = &positionParamsList[mtrNum];
+
+	params->prevSpeed_rps = params->speedRef_rps;
+	params->counter++;
+
+	if (!gMotorVars[mtrNum].Flag_Run_Identify) {
+		params->posRef = _IQ20mpyI32(_IQ20(20.0), stObj->pos.conv.PosROCounts) + _IQtoIQ20(stObj->pos.conv.Pos_mrev);
+		params->transitionPosRef = params->posRef;
+		params->speedRef_rps = _IQ20(0.0);
+		params->currentAcc_rpsps = _IQ20(0.0);
+
+		return;
+	}
+
+	if (params->transitionPosRef < params->posRef) {
+		params->posDiff = params->posRef - params->transitionPosRef;
+
+		params->requiredDeceleration_rpsps = _IQ20div(_IQ20mpy(params->speedRef_rps, params->speedRef_rps), _IQ20mpy(params->posDiff, _IQ20(2.0)));
+
+		if (params->requiredDeceleration_rpsps > params->dec_rpsps) {
+			params->speedRef_rps -= _IQ20mpy(params->requiredDeceleration_rpsps, params->posSampleTime_sec);
+
+			if (params->speedRef_rps < params->minSpeed_rps) {
+				params->speedRef_rps = params->minSpeed_rps;
+			}
+		} else if (params->speedRef_rps < params->maxSpeed_rps) {
+			params->speedRef_rps += _IQ20mpy(params->acc_rpsps, params->posSampleTime_sec);
+
+			if (params->speedRef_rps > params->maxSpeed_rps) {
+				params->speedRef_rps = params->maxSpeed_rps;
+			}
+		} else if (params->speedRef_rps > params->maxSpeed_rps) {
+			params->speedRef_rps -= _IQ20mpy(params->dec_rpsps, params->posSampleTime_sec);
+
+			if (params->speedRef_rps < params->maxSpeed_rps) {
+				params->speedRef_rps = params->maxSpeed_rps;
+			}
+		}
+
+		params->transitionPosRef += _IQ20mpy(params->speedRef_rps, params->posSampleTime_sec);
+
+		if (params->transitionPosRef > params->posRef) {
+			params->transitionPosRef = params->posRef;
+			params->speedRef_rps = _IQ20(0.0);
+		}
+
+	} else if (params->transitionPosRef > params->posRef) {
+		params->posDiff = params->transitionPosRef - params->posRef;
+
+		params->requiredDeceleration_rpsps = _IQ20div(_IQ20mpy(params->speedRef_rps, params->speedRef_rps), _IQ20mpy(params->posDiff, _IQ20(2.0)));
+
+		if (params->requiredDeceleration_rpsps > params->dec_rpsps) {
+			params->speedRef_rps += _IQ20mpy(params->requiredDeceleration_rpsps, params->posSampleTime_sec);
+
+			if (params->speedRef_rps > -params->minSpeed_rps) {
+				params->speedRef_rps = -params->minSpeed_rps;
+			}
+		} else if (params->speedRef_rps > -params->maxSpeed_rps) {
+			params->speedRef_rps -= _IQ20mpy(params->acc_rpsps, params->posSampleTime_sec);
+
+			if (params->speedRef_rps < -params->maxSpeed_rps) {
+				params->speedRef_rps = -params->maxSpeed_rps;
+			}
+		} else if (params->speedRef_rps < -params->maxSpeed_rps) {
+			params->speedRef_rps += _IQ20mpy(params->dec_rpsps, params->posSampleTime_sec);
+
+			if (params->speedRef_rps > -params->maxSpeed_rps) {
+				params->speedRef_rps = -params->maxSpeed_rps;
+			}
+		}
+
+		params->transitionPosRef += _IQ20mpy(params->speedRef_rps, params->posSampleTime_sec);
+
+		if (params->transitionPosRef < params->posRef) {
+			params->transitionPosRef = params->posRef;
+			params->speedRef_rps = _IQ20(0.0);
+		}
+	}
+
+	params->currentAcc_rpsps = _IQ20mpy(_IQ20abs(params->speedRef_rps) - _IQ20abs(params->prevSpeed_rps), params->posSampleTime_sec);
+}
+
+void serialWrite(char *sendData, int length) {
+	int i = 0;
+
+	while (i < length) {
+		//SCI_putDataNonBlocking(halHandle->sciBHandle, sendData[i]);
+		//i++;
+
+		if (SCI_txReady(halHandle->sciBHandle)) {
+			SCI_write(halHandle->sciBHandle, sendData[i]);
+			i++;
+		}
+	}
 }
 
 //@} //defgroup
