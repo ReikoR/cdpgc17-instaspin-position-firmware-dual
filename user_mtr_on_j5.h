@@ -206,7 +206,7 @@ extern "C" {
 //! \brief This value should be determined by putting SpinTAC Control through a tuning process
 //! \brief If a Bandwidth Scale value has been previously identified
 //! \brief multiply it by 20 to convert into Bandwidth
-#define USER_SYSTEM_BANDWIDTH_2      (100.0)
+#define USER_SYSTEM_BANDWIDTH_2      (80.0)
 
 //! \brief Define each motor with a unique name and ID number
 // BLDC & SMPM motors
@@ -334,7 +334,7 @@ extern "C" {
 #define USER_MOTOR_MAX_CURRENT_2          (20.0)
 #define USER_MOTOR_FLUX_EST_FREQ_Hz_2     (100.0)
 #define USER_MOTOR_ENCODER_LINES_2        (2048.0)
-#define USER_MOTOR_MAX_SPEED_KRPM_2       (4.0)
+#define USER_MOTOR_MAX_SPEED_KRPM_2       (6.0)
 #define USER_SYSTEM_INERTIA_2             (0.16)
 #define USER_SYSTEM_FRICTION_2            (0.15)
 
