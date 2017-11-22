@@ -329,7 +329,7 @@ extern "C" {
 #define USER_MOTOR_Ls_q_2                 (1.95586745e-05)
 #define USER_MOTOR_RATED_FLUX_2           (0.0143373376)
 #define USER_MOTOR_MAGNETIZING_CURRENT_2  (NULL)
-#define USER_MOTOR_RES_EST_CURRENT_2      (2.0)
+#define USER_MOTOR_RES_EST_CURRENT_2      (10.0)
 #define USER_MOTOR_IND_EST_CURRENT_2      (-2.0)
 #define USER_MOTOR_MAX_CURRENT_2          (20.0)
 #define USER_MOTOR_FLUX_EST_FREQ_Hz_2     (100.0)

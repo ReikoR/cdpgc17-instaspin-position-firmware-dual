@@ -197,6 +197,13 @@ int commandReceived = 0;
 int commandStart = 0;
 int sendFeedback = 0;
 
+uint32_t enc1StableAlignCount = 0;
+uint32_t enc2StableAlignCount = 0;
+uint32_t enc1PrevValue = 0;
+uint32_t enc2PrevValue = 0;
+uint32_t enc1StableAlignLimit = 10000;
+uint32_t enc2StableAlignLimit = 10000;
+
 typedef struct PositionParams {
 	_iq20 posRef;
 	_iq20 transitionPosRef;
@@ -210,7 +217,9 @@ typedef struct PositionParams {
 	_iq20 prevSpeed_rps;
 	_iq20 currentAcc_rpsps;
 	_iq20 posSampleTime_sec;
-	long counter;
+	_iq prevPosMrev;
+	uint32_t zeroSpeedMoveFailCount;
+	uint32_t zeroSpeedMoveFailLimit;
 } PositionParams;
 
 PositionParams positionParamsList[2] = {
@@ -218,7 +227,7 @@ PositionParams positionParamsList[2] = {
 		.posRef = _IQ20(0.0),
 		.transitionPosRef = _IQ20(0.0),
 		.speedRef_rps = _IQ20(0.0),
-		.maxSpeed_rps = _IQ20(1.0),
+		.maxSpeed_rps = _IQ20(0.0),
 		.minSpeed_rps = _IQ20(0.001),
 		.acc_rpsps = _IQ20(100.0),
 		.dec_rpsps = _IQ20(100.0),
@@ -227,13 +236,15 @@ PositionParams positionParamsList[2] = {
 		.prevSpeed_rps = _IQ20(0.0),
 		.currentAcc_rpsps = _IQ20(0.0),
 		.posSampleTime_sec = _IQ20(ST_SAMPLE_TIME),
-		.counter = 0
+		.prevPosMrev = _IQ(0.0),
+		.zeroSpeedMoveFailCount = 0,
+		.zeroSpeedMoveFailLimit = 3
 	},
 	{
 		.posRef = _IQ20(0.0),
 		.transitionPosRef = _IQ20(0.0),
 		.speedRef_rps = _IQ20(0.0),
-		.maxSpeed_rps = _IQ20(1.0),
+		.maxSpeed_rps = _IQ20(0.0),
 		.minSpeed_rps = _IQ20(0.001),
 		.acc_rpsps = _IQ20(100.0),
 		.dec_rpsps = _IQ20(100.0),
@@ -242,7 +253,9 @@ PositionParams positionParamsList[2] = {
 		.prevSpeed_rps = _IQ20(0.0),
 		.currentAcc_rpsps = _IQ20(0.0),
 		.posSampleTime_sec = _IQ20(ST_SAMPLE_TIME_2),
-		.counter = 0
+		.prevPosMrev = _IQ(0.0),
+		.zeroSpeedMoveFailCount = 0,
+		.zeroSpeedMoveFailLimit = 3
 	}
 };
 
@@ -778,19 +791,46 @@ interrupt void motor1_ISR(void) {
 			// set Q-axis current to 0
 			gIdq_ref_pu[HAL_MTR1].value[1] = _IQ(0.0);
 
+			uint32_t encValue = HAL_getQepPosnCounts(halHandleMtr[HAL_MTR1]);
+
 			// save encoder reading when forcing motor into alignment
 			if (gUserParams[HAL_MTR1].motor_type == MOTOR_Type_Pm) {
 				ENC_setZeroOffset(encHandle[HAL_MTR1],
 						(uint32_t) (HAL_getQepPosnMaximum(halHandleMtr[HAL_MTR1])
-								- HAL_getQepPosnCounts(halHandleMtr[HAL_MTR1])));
+								- encValue));
 			}
 
-			// if alignment counter exceeds threshold, exit alignment
-			if (gAlignCount[HAL_MTR1]++ >= gUserParams[HAL_MTR1].ctrlWaitTime[CTRL_State_OffLine]) {
+			if (enc1PrevValue == encValue) {
+				enc1StableAlignCount++;
+			} else {
+				enc1StableAlignCount = 0;
+			}
+
+			enc1PrevValue = encValue;
+
+			if (enc1StableAlignCount >= enc1StableAlignLimit) {
+				// alignment done
 				gMotorVars[HAL_MTR1].Flag_enableAlignment = false;
+				enc1StableAlignCount = 0;
 				gAlignCount[HAL_MTR1] = 0;
 				gIdq_ref_pu[HAL_MTR1].value[0] = _IQ(0.0);
 			}
+
+			if (gAlignCount[HAL_MTR1]++ >= gUserParams[HAL_MTR1].ctrlWaitTime[CTRL_State_OffLine]) {
+				// failed to align
+				gMotorVars[HAL_MTR1].Flag_Run_Identify = false;
+				gMotorVars[HAL_MTR1].Flag_enableAlignment = true;
+				enc1StableAlignCount = 0;
+				gAlignCount[HAL_MTR1] = 0;
+				gIdq_ref_pu[HAL_MTR1].value[0] = _IQ(0.0);
+			}
+
+			// if alignment counter exceeds threshold, exit alignment
+			/*if (gAlignCount[HAL_MTR1]++ >= gUserParams[HAL_MTR1].ctrlWaitTime[CTRL_State_OffLine]) {
+				gMotorVars[HAL_MTR1].Flag_enableAlignment = false;
+				gAlignCount[HAL_MTR1] = 0;
+				gIdq_ref_pu[HAL_MTR1].value[0] = _IQ(0.0);
+			}*/
 		}
 
 		// Get the reference value for the d-axis current controller.
@@ -1019,19 +1059,46 @@ interrupt void motor2_ISR(void) {
 			// set Q-axis current to 0
 			gIdq_ref_pu[HAL_MTR2].value[1] = _IQ(0.0);
 
+			uint32_t encValue = HAL_getQepPosnCounts(halHandleMtr[HAL_MTR2]);
+
 			// save encoder reading when forcing motor into alignment
 			if (gUserParams[HAL_MTR2].motor_type == MOTOR_Type_Pm) {
 				ENC_setZeroOffset(encHandle[HAL_MTR2],
 						(uint32_t) (HAL_getQepPosnMaximum(halHandleMtr[HAL_MTR2])
-								- HAL_getQepPosnCounts(halHandleMtr[HAL_MTR2])));
+								- encValue));
 			}
 
-			// if alignment counter exceeds threshold, exit alignment
-			if (gAlignCount[HAL_MTR2]++ >= gUserParams[HAL_MTR2].ctrlWaitTime[CTRL_State_OffLine]) {
+			if (enc2PrevValue == encValue) {
+				enc2StableAlignCount++;
+			} else {
+				enc2StableAlignCount = 0;
+			}
+
+			enc2PrevValue = encValue;
+
+			if (enc2StableAlignCount >= enc2StableAlignLimit) {
+				// alignment done
 				gMotorVars[HAL_MTR2].Flag_enableAlignment = false;
+				enc2StableAlignCount = 0;
 				gAlignCount[HAL_MTR2] = 0;
 				gIdq_ref_pu[HAL_MTR2].value[0] = _IQ(0.0);
 			}
+
+			if (gAlignCount[HAL_MTR2]++ >= gUserParams[HAL_MTR2].ctrlWaitTime[CTRL_State_OffLine]) {
+				// failed to align
+				gMotorVars[HAL_MTR2].Flag_Run_Identify = false;
+				gMotorVars[HAL_MTR2].Flag_enableAlignment = true;
+				enc2StableAlignCount = 0;
+				gAlignCount[HAL_MTR2] = 0;
+				gIdq_ref_pu[HAL_MTR2].value[0] = _IQ(0.0);
+			}
+
+			// if alignment counter exceeds threshold, exit alignment
+			/*if (gAlignCount[HAL_MTR2]++ >= gUserParams[HAL_MTR2].ctrlWaitTime[CTRL_State_OffLine]) {
+				gMotorVars[HAL_MTR2].Flag_enableAlignment = false;
+				gAlignCount[HAL_MTR2] = 0;
+				gIdq_ref_pu[HAL_MTR2].value[0] = _IQ(0.0);
+			}*/
 		}
 
 		// Get the reference value for the d-axis current controller.
@@ -1559,16 +1626,35 @@ void calcTransitionPosRef(HAL_MtrSelect_e mtrNum) {
 	PositionParams *params = &positionParamsList[mtrNum];
 
 	params->prevSpeed_rps = params->speedRef_rps;
-	params->counter++;
+
+	_iq posMrev = stObj->pos.conv.Pos_mrev;
 
 	if (!isMotorActive(mtrNum)) {
-		params->posRef = _IQ20mpyI32(_IQ20(20.0), stObj->pos.conv.PosROCounts) + _IQtoIQ20(stObj->pos.conv.Pos_mrev);
+		params->posRef = _IQ20mpyI32(_IQ20(20.0), stObj->pos.conv.PosROCounts) + _IQtoIQ20(posMrev);
 		params->transitionPosRef = params->posRef;
 		params->speedRef_rps = _IQ20(0.0);
 		params->currentAcc_rpsps = _IQ20(0.0);
 
 		return;
 	}
+
+	if (params->maxSpeed_rps == _IQ20(0.0) && params->speedRef_rps == _IQ20(0.0) && _IQabs(posMrev - params->prevPosMrev) > _IQ(0.01)) {
+		params->zeroSpeedMoveFailCount++;
+
+		if (params->zeroSpeedMoveFailCount >= params->zeroSpeedMoveFailLimit) {
+			// moving, but should not
+			gMotorVars[mtrNum].Flag_Run_Identify = false;
+			gMotorVars[mtrNum].Flag_enableAlignment = true;
+
+			params->zeroSpeedMoveFailCount = 0;
+
+			params->prevPosMrev = stObj->pos.conv.Pos_mrev;
+
+			return;
+		}
+	}
+
+	params->prevPosMrev = posMrev;
 
 	if (params->transitionPosRef < params->posRef) {
 		params->posDiff = params->posRef - params->transitionPosRef;
